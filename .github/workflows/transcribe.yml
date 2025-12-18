@@ -1,0 +1,97 @@
+name: Drive -> AssemblyAI -> callback
+
+on:
+  workflow_dispatch:
+    inputs:
+      drive_file_id:
+        description: "Google Drive file ID (must be public)"
+        required: true
+        type: string
+      callback_url:
+        description: "Optional: n8n webhook URL to POST results back to (leave blank if not used)"
+        required: false
+        type: string
+      correlation_id:
+        description: "Optional: ID you use to match the result back (Notion page ID etc.)"
+        required: false
+        type: string
+
+jobs:
+  transcribe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+
+    steps:
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+          python3 -m pip install --upgrade pip
+          python3 -m pip install gdown
+
+      - name: Download from Google Drive (public)
+        run: |
+          # gdown supports passing the file ID directly
+          gdown "${{ github.event.inputs.drive_file_id }}" -O input_media
+
+      - name: Upload media to AssemblyAI
+        env:
+          ASSEMBLYAI_API_KEY: ${{ secrets.ASSEMBLYAI_API_KEY }}
+        run: |
+          UPLOAD_RES=$(curl -sS -X POST "https://api.assemblyai.com/v2/upload" \
+            -H "authorization: $ASSEMBLYAI_API_KEY" \
+            --data-binary "@input_media")
+          echo "$UPLOAD_RES" | jq .
+          UPLOAD_URL=$(echo "$UPLOAD_RES" | jq -r '.upload_url')
+          echo "UPLOAD_URL=$UPLOAD_URL" >> $GITHUB_ENV
+
+      - name: Submit transcript
+        env:
+          ASSEMBLYAI_API_KEY: ${{ secrets.ASSEMBLYAI_API_KEY }}
+        run: |
+          SUBMIT_RES=$(curl -sS -X POST "https://api.assemblyai.com/v2/transcript" \
+            -H "authorization: $ASSEMBLYAI_API_KEY" \
+            -H "content-type: application/json" \
+            -d "{\"audio_url\":\"$UPLOAD_URL\"}")
+          echo "$SUBMIT_RES" | jq .
+          TRANSCRIPT_ID=$(echo "$SUBMIT_RES" | jq -r '.id')
+          echo "TRANSCRIPT_ID=$TRANSCRIPT_ID" >> $GITHUB_ENV
+
+      - name: Poll until completed
+        env:
+          ASSEMBLYAI_API_KEY: ${{ secrets.ASSEMBLYAI_API_KEY }}
+        run: |
+          for i in {1..240}; do
+            RES=$(curl -sS "https://api.assemblyai.com/v2/transcript/$TRANSCRIPT_ID" \
+              -H "authorization: $ASSEMBLYAI_API_KEY")
+            STATUS=$(echo "$RES" | jq -r '.status')
+            echo "Status: $STATUS"
+
+            if [ "$STATUS" = "completed" ]; then
+              TEXT=$(echo "$RES" | jq -r '.text')
+              echo "TRANSCRIPT_TEXT<<EOF" >> $GITHUB_ENV
+              echo "$TEXT" >> $GITHUB_ENV
+              echo "EOF" >> $GITHUB_ENV
+              exit 0
+            fi
+
+            if [ "$STATUS" = "error" ]; then
+              echo "$RES" | jq .
+              exit 1
+            fi
+
+            sleep 5
+          done
+          echo "Timed out waiting for transcript."
+          exit 1
+
+      - name: Optional callback (POST results)
+        if: ${{ github.event.inputs.callback_url != '' }}
+        run: |
+          curl -sS -X POST "${{ github.event.inputs.callback_url }}" \
+            -H "content-type: application/json" \
+            -d "$(jq -n \
+              --arg correlation_id "${{ github.event.inputs.correlation_id }}" \
+              --arg transcript_id "${TRANSCRIPT_ID:-}" \
+              --arg transcript_text "${TRANSCRIPT_TEXT:-}" \
+              '{correlation_id:$correlation_id, transcript_id:$transcript_id, transcript_text:$transcript_text}')"
