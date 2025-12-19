@@ -92,6 +92,7 @@ jobs:
             -H "content-type: application/json" \
             -d "$(jq -n \
               --arg correlation_id "${{ github.event.inputs.correlation_id }}" \
+              --arg drive_file_id "${{ github.event.inputs.drive_file_id }}" \
               --arg transcript_id "${TRANSCRIPT_ID:-}" \
               --arg transcript_text "${TRANSCRIPT_TEXT:-}" \
-              '{correlation_id:$correlation_id, transcript_id:$transcript_id, transcript_text:$transcript_text}')"
+              '{correlation_id:$correlation_id, drive_file_id:$drive_file_id, transcript_id:$transcript_id, transcript_text:$transcript_text}')"
