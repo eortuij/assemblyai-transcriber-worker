@@ -59,11 +59,13 @@ jobs:
         env:
           ASSEMBLYAI_API_KEY: ${{ github.event.inputs.assemblyai_api_key }}
         run: |
+          # Use -T to stream the file instead of --data-binary which loads
+          # the entire file into memory (fails on large files like 1GB+ videos).
+          # -X POST overrides -T's default PUT method.
           UPLOAD_RES=$(curl -sS -X POST "https://api.assemblyai.com/v2/upload" \
             -H "authorization: $ASSEMBLYAI_API_KEY" \
             -H "content-type: application/octet-stream" \
-            -H "transfer-encoding: chunked" \
-            --data-binary "@input_media")
+            -T input_media)
 
           echo "$UPLOAD_RES" | jq .
 
