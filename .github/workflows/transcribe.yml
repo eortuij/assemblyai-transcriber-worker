@@ -23,6 +23,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 355
     steps:
+      - name: Mask secrets
+        run: |
+          echo "::add-mask::${{ github.event.inputs.assemblyai_api_key }}"
+
       - name: Install tools
         run: |
           sudo apt-get update
